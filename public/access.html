@@ -61,6 +61,7 @@
     }
   </style>
 </head>
+
 <body>
 
   <div class="box">
@@ -89,6 +90,7 @@
       });
 
       if (response.ok) {
+        sessionStorage.setItem('accessGranted', 'yes');
         window.location.href = '/';
       } else {
         document.getElementById('error').textContent = 'Wrong password';
