@@ -11,7 +11,12 @@
 <body>
 
 <script>
-  if (sessionStorage.getItem('accessGranted') !== 'yes') {
+  const nav = performance.getEntriesByType('navigation')[0];
+
+  if (nav && nav.type === 'reload') {
+    sessionStorage.removeItem('accessGranted');
+    window.location.replace('/access.html');
+  } else if (sessionStorage.getItem('accessGranted') !== 'yes') {
     window.location.replace('/access.html');
   } else {
     sessionStorage.removeItem('accessGranted');
