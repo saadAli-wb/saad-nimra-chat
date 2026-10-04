@@ -102,12 +102,13 @@ app.post('/api/access', (req, res) => {
   }
 
   const token = crypto.randomBytes(32).toString('hex');
-  db.accessSessions[token] = Date.now() + 7 * DAY;
+
+  db.accessSessions[token] = true;
   save();
 
   res.setHeader(
     'Set-Cookie',
-    `chat_access=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}`
+    `chat_access=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/`
   );
 
   res.json({ ok: true });
