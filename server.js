@@ -81,6 +81,43 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 app.use(express.json());
+db.accessSessions ||= {};
+
+const getCookie = (req, name) => {
+  const cookies = String(req.headers.cookie || '').split(';');
+  const item = cookies.find(c => c.trim().startsWith(name + '='));
+  return item ? decodeURIComponent(item.trim().slice(name.length + 1)) : null;
+};
+
+const hasAccess = req => {
+  const token = getCookie(req, 'chat_access');
+  return token && db.accessSessions[token] && db.accessSessions[token] > Date.now();
+};
+
+app.post('/api/access', (req, res) => {
+  const password = String(req.body.password || '');
+
+  if (password !== String(process.env.CHAT_PASSWORD || '')) {
+    return res.status(401).json({ error: 'Wrong password' });
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  db.accessSessions[token] = Date.now() + 7 * DAY;
+  save();
+
+  res.setHeader(
+    'Set-Cookie',
+    `chat_access=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}`
+  );
+
+  res.json({ ok: true });
+});
+
+app.use((req, res, next) => {
+  if (req.path === '/access.html' || req.path === '/api/access') return next();
+  if (!hasAccess(req)) return res.redirect('/access.html');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
