@@ -50,7 +50,7 @@ function toast(title, body) {
 function notify(title, body) {
   if (!S.notif) return;
   toast(title, body);
-  if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+  if ((document.hidden || !document.hasFocus()) && 'Notification' in window && Notification.permission === 'granted') {
     try { new Notification(title, { body, icon: S.peer ? avatarOf(S.peer) : undefined }); } catch { }
   }
 }
@@ -86,7 +86,11 @@ async function boot() {
 function connect() {
   const s = S.sock = io({ auth: { token: S.token } });
   let first = true;
-  s.on('hello', h => { if (S.me && h.id !== S.me.id) { sessionStorage.removeItem('pm_token'); location.reload(); } });
+  s.on('hello', h => {
+    if (S.me && h.id !== S.me.id) { sessionStorage.removeItem('pm_token'); location.reload(); return; }
+    if (S.ver && h.v && S.ver !== h.v) { location.reload(); return; }
+    S.ver = h.v;
+  });
   s.on('connect', () => { if (first) { first = false; markRead(); } else loadAll(); });
   s.on('message', onMessage);
   s.on('receipts', ({ ids, state }) => ids.forEach(id => {
@@ -294,9 +298,22 @@ $('#fileStatus').onchange = async e => {
 /* ---------- calls (WebRTC) ---------- */
 const RTC_CFG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 let C = null, ringTimer = null; // C = { id, kind, dir:'out'|'in', phase:'ringing'|'connecting'|'connected', pc, local, queue, timer }
+let audioCtx = null;
+function unlockAudio() {
+  try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch { }
+}
+['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, unlockAudio));
+document.addEventListener('click', () => {
+  if (S.notif && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+}, { once: true });
 function ring(on) {
   clearInterval(ringTimer); if (!on) return;
-  const beep = () => { try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(); o.frequency.value = 460; o.connect(a.destination); o.start(); setTimeout(() => { o.stop(); a.close(); }, 380); } catch { } };
+  const beep = () => {
+    try {
+      unlockAudio(); const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = 460; g.gain.value = 0.15; o.connect(g); g.connect(audioCtx.destination); o.start(); setTimeout(() => o.stop(), 380);
+    } catch { }
+  };
   beep(); ringTimer = setInterval(beep, 1600);
 }
 async function getMedia(kind) {
@@ -336,11 +353,14 @@ function onRinging(info) {
   C.id = info.callId; C.other = info.callee; paintCall();
 }
 function onIncoming(info) {
-  if (info.calleeId !== S.me.id || info.callerId === S.me.id) return;
+  const callerId = info.callerId || info.from;
+  if (!callerId || callerId === S.me.id || (info.calleeId && info.calleeId !== S.me.id)) return;
+  const caller = info.caller || { id: callerId, name: S.peer.name, avatar: S.peer.avatar };
   if (C) { S.sock.emit('call:busy', { callId: info.callId }); return; }
-  C = { id: info.callId, kind: info.kind, dir: 'in', phase: 'ringing', queue: [], other: info.caller };
+  C = { id: info.callId, kind: info.kind, dir: 'in', phase: 'ringing', queue: [], other: caller };
   paintCall(); ring(true);
-  notify(`Incoming ${info.kind} call`, `from ${info.caller.name}`);
+  document.title = `📞 Incoming call from ${caller.name}`;
+  notify(`Incoming ${info.kind} call`, `from ${caller.name}`);
 }
 function makePC() {
   const pc = C.pc = new RTCPeerConnection(RTC_CFG);
@@ -407,6 +427,7 @@ function finishCall() {
     if (C.pc) { C.pc.onconnectionstatechange = null; C.pc.close(); }
   }
   C = null; $('#remoteV').srcObject = null; $('#localV').srcObject = null;
+  if (S.me) document.title = S.me.name + ' · Messenger';
   ['cMute', 'cCam'].forEach(id => { $('#' + id).classList.remove('off'); });
   $('#cMute small').textContent = 'Mute'; $('#cCam small').textContent = 'Camera off';
   paintCall();
