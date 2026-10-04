@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Private Chat</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #080808;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    .box {
+      width: 90%;
+      max-width: 380px;
+      text-align: center;
+      padding: 35px 25px;
+      border-radius: 20px;
+      background: #151515;
+      box-shadow: 0 0 30px #00ffff55;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+    }
+
+    p {
+      color: #aaa;
+    }
+
+    input {
+      width: 90%;
+      padding: 14px;
+      margin: 15px 0;
+      border: 1px solid #00ffff;
+      border-radius: 10px;
+      background: #080808;
+      color: white;
+      outline: none;
+    }
+
+    button {
+      padding: 13px 30px;
+      border: none;
+      border-radius: 10px;
+      background: #00ffff;
+      color: #000;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #error {
+      color: #ff5555;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="box">
+    <h1>🔒 Private Chat</h1>
+    <p>Enter the private access password</p>
+
+    <form id="accessForm">
+      <input type="password" id="password" placeholder="Password" required>
+      <br>
+      <button type="submit">Enter Chat</button>
+    </form>
+
+    <div id="error"></div>
+  </div>
+
+  <script>
+    document.getElementById('accessForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const password = document.getElementById('password').value;
+
+      const response = await fetch('/api/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+
+      if (response.ok) {
+        window.location.href = '/';
+      } else {
+        document.getElementById('error').textContent = 'Wrong password';
+      }
+    });
+  </script>
+
+</body>
+</html>
