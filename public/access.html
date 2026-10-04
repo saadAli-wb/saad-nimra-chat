@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Private Chat</title>
+
   <style>
     body {
       margin: 0;
@@ -66,11 +67,19 @@
 
   <div class="box">
     <h1>🔒 Private Chat</h1>
+
     <p>Enter the private access password</p>
 
     <form id="accessForm">
-      <input type="password" id="password" placeholder="Password" required>
+      <input
+        type="password"
+        id="password"
+        placeholder="Password"
+        required
+      >
+
       <br>
+
       <button type="submit">Enter Chat</button>
     </form>
 
@@ -82,18 +91,31 @@
       e.preventDefault();
 
       const password = document.getElementById('password').value;
+      const error = document.getElementById('error');
 
-      const response = await fetch('/api/access', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
-      });
+      error.textContent = '';
 
-      if (response.ok) {
-        sessionStorage.setItem('accessGranted', 'yes');
-        window.location.href = '/';
-      } else {
-        document.getElementById('error').textContent = 'Wrong password';
+      try {
+        const response = await fetch('/api/access', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ password })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+
+          window.location.href =
+            '/?accessToken=' + encodeURIComponent(data.token);
+
+        } else {
+          error.textContent = 'Wrong password';
+        }
+
+      } catch (err) {
+        error.textContent = 'Connection error. Please try again.';
       }
     });
   </script>
