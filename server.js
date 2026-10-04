@@ -43,7 +43,9 @@ const newUser = (id, name, pw) => ({
 let db;
 
 try {
-  db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  db = JSON.parse(
+    fs.readFileSync(DB_FILE, 'utf8')
+  );
 } catch {
   db = null;
 }
@@ -79,27 +81,43 @@ function flush() {
   const tmp = DB_FILE + '.tmp';
 
   try {
-    fs.writeFileSync(tmp, JSON.stringify(db));
-    fs.renameSync(tmp, DB_FILE);
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify(db)
+    );
+
+    fs.renameSync(
+      tmp,
+      DB_FILE
+    );
   } catch {
     try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(db));
+      fs.writeFileSync(
+        DB_FILE,
+        JSON.stringify(db)
+      );
     } catch (e) {
-      console.error('Save failed:', e.message);
+      console.error(
+        'Save failed:',
+        e.message
+      );
     }
   }
 }
 
 const save = () => {
   if (!saveTimer) {
-    saveTimer = setTimeout(flush, 250);
+    saveTimer = setTimeout(
+      flush,
+      250
+    );
   }
 };
 
 flush();
 
-['SIGINT', 'SIGTERM'].forEach(s => {
-  process.on(s, () => {
+['SIGINT', 'SIGTERM'].forEach(signal => {
+  process.on(signal, () => {
     flush();
     process.exit(0);
   });
@@ -112,10 +130,13 @@ const socks = {
   nimra: new Set()
 };
 
-const isOn = id => socks[id].size > 0;
+const isOn = id =>
+  socks[id].size > 0;
 
 const emitTo = (id, ev, data) =>
-  socks[id].forEach(s => s.emit(ev, data));
+  socks[id].forEach(socket =>
+    socket.emit(ev, data)
+  );
 
 const party = (viewer, id) => {
   const v = view(viewer);
@@ -144,7 +165,7 @@ const callInfo = (c, viewer) => ({
 
 function view(uid) {
   const me = db.users[uid];
-  const p = db.users[PEER[uid]];
+  const peer = db.users[PEER[uid]];
 
   return {
     me: {
@@ -155,23 +176,24 @@ function view(uid) {
     },
 
     peer: {
-      id: p.id,
-      name: me.contactName || p.name,
-      realName: p.name,
-      avatar: p.avatar,
-      lastSeen: p.lastSeen,
-      online: isOn(p.id)
+      id: peer.id,
+      name: me.contactName || peer.name,
+      realName: peer.name,
+      avatar: peer.avatar,
+      lastSeen: peer.lastSeen,
+      online: isOn(peer.id)
     }
   };
 }
 
 const liveStatuses = () =>
   db.statuses.filter(
-    s => Date.now() - s.at < DAY
+    status =>
+      Date.now() - status.at < DAY
   );
 
-const authUser = t => {
-  const id = t && db.sessions[t];
+const authUser = token => {
+  const id = token && db.sessions[token];
 
   return id && db.users[id]
     ? id
@@ -180,28 +202,37 @@ const authUser = t => {
 
 const auth = (req, res, next) => {
   const id = authUser(
-    (req.headers.authorization || '').replace(
-      'Bearer ',
-      ''
-    )
+    (req.headers.authorization || '')
+      .replace('Bearer ', '')
   );
 
   if (!id) {
     return res
       .status(401)
-      .json({ error: 'Please log in again' });
+      .json({
+        error: 'Please log in again'
+      });
   }
 
   req.uid = id;
   next();
 };
 
-function addMessage(m) {
-  db.messages.push(m);
+function addMessage(message) {
+  db.messages.push(message);
   save();
 
-  emitTo(m.from, 'message', m);
-  emitTo(m.to, 'message', m);
+  emitTo(
+    message.from,
+    'message',
+    message
+  );
+
+  emitTo(
+    message.to,
+    'message',
+    message
+  );
 }
 
 /* ---------- HTTP ---------- */
@@ -212,41 +243,30 @@ const io = new Server(server);
 
 app.use(express.json());
 
+/* ---------- PRIVATE ACCESS SYSTEM ---------- */
+
 /*
-  =====================================================
-  PRIVATE ACCESS SYSTEM
-  =====================================================
-
-  Important:
-
-  We are NOT using a permanent cookie anymore.
-
-  Every successful password creates a ONE-TIME token.
+  Every successful access password creates
+  a one-time token.
 
   The token is required to open the chat page.
 
-  Once the chat page is opened, that token is immediately
-  consumed.
+  The token is consumed immediately when
+  the chat page opens.
 
   Therefore:
 
-  First open:
-  /?accessToken=XXXX
+  Password -> Chat
 
-  Reload:
-  /
-  -> token is gone
-  -> password screen appears again
+  Reload -> Password again
 
-  Browser reopen:
-  /
-  -> password screen appears again
+  Browser close/reopen -> Password again
 */
 
-/* One-time access tokens */
 const accessTokens = new Map();
 
-/* Create access token */
+/* ---------- create access token ---------- */
+
 app.post('/api/access', (req, res) => {
   const password = String(
     req.body.password || ''
@@ -262,18 +282,23 @@ app.post('/api/access', (req, res) => {
   ) {
     return res
       .status(401)
-      .json({ error: 'Wrong password' });
+      .json({
+        error: 'Wrong password'
+      });
   }
 
   const token = crypto
     .randomBytes(32)
     .toString('hex');
 
-  accessTokens.set(token, Date.now());
+  accessTokens.set(
+    token,
+    Date.now()
+  );
 
   /*
-    Token automatically expires after 60 seconds
-    if it is never used.
+    Token expires after 60 seconds
+    if it is not used.
   */
   setTimeout(() => {
     accessTokens.delete(token);
@@ -285,59 +310,106 @@ app.post('/api/access', (req, res) => {
   });
 });
 
-/*
-  Main chat page.
+/* ---------- protected chat page ---------- */
 
-  The ONLY way to open it is with a fresh
-  one-time access token.
-*/
 app.get('/', (req, res) => {
   const token = String(
     req.query.accessToken || ''
   );
 
-  if (!token || !accessTokens.has(token)) {
-    return res.redirect('/access.html');
+  /*
+    No token or invalid token:
+    send user back to password page.
+  */
+  if (
+    !token ||
+    !accessTokens.has(token)
+  ) {
+    return res.redirect(
+      '/access.html'
+    );
   }
 
   /*
     Consume token immediately.
 
-    This is what makes reload require
-    the password again.
+    This is important:
+    after opening the chat, the same
+    token cannot be used again.
   */
   accessTokens.delete(token);
 
+  /*
+    Prevent browser from using an old
+    cached copy of the chat page.
+  */
+  res.setHeader(
+    'Cache-Control',
+    'no-store, no-cache, must-revalidate, private'
+  );
+
+  res.setHeader(
+    'Pragma',
+    'no-cache'
+  );
+
+  res.setHeader(
+    'Expires',
+    '0'
+  );
+
   res.sendFile(
-    path.join(__dirname, 'public', 'index.html')
+    path.join(
+      __dirname,
+      'public',
+      'index.html'
+    )
   );
 });
 
-/*
-  Direct access to index.html is also blocked.
-*/
+/* ---------- direct index.html protection ---------- */
+
 app.get('/index.html', (req, res) => {
-  return res.redirect('/access.html');
-});
-
-/*
-  Access page is always allowed.
-*/
-app.get('/access.html', (req, res) => {
-  res.sendFile(
-    path.join(__dirname, 'public', 'access.html')
+  return res.redirect(
+    '/access.html'
   );
 });
 
-/*
-  Static files.
+/* ---------- access page ---------- */
 
-  CSS, JS, images etc. are allowed because the
-  actual chat page itself is protected above.
-*/
+app.get('/access.html', (req, res) => {
+  res.setHeader(
+    'Cache-Control',
+    'no-store, no-cache, must-revalidate, private'
+  );
+
+  res.setHeader(
+    'Pragma',
+    'no-cache'
+  );
+
+  res.setHeader(
+    'Expires',
+    '0'
+  );
+
+  res.sendFile(
+    path.join(
+      __dirname,
+      'public',
+      'access.html'
+    )
+  );
+});
+
+/* ---------- static files ---------- */
+
 app.use(
   express.static(
-    path.join(__dirname, 'public')
+    path.join(
+      __dirname,
+      'public'
+    )
   )
 );
 
@@ -352,28 +424,34 @@ const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
 
-    filename: (req, f, cb) => {
+    filename: (req, file, cb) => {
       cb(
         null,
         crypto.randomBytes(16).toString('hex') +
           path
-            .extname(f.originalname)
+            .extname(file.originalname)
             .toLowerCase()
-            .replace(/[^.a-z0-9]/g, '')
+            .replace(
+              /[^.a-z0-9]/g,
+              ''
+            )
       );
     }
   }),
 
   limits: {
-    fileSize: 150 * 1024 * 1024
+    fileSize:
+      150 * 1024 * 1024
   }
 });
 
 const kindOf = mime =>
-  ['image', 'video', 'audio'].find(
-    k =>
-      String(mime).startsWith(k + '/')
-  );
+  ['image', 'video', 'audio']
+    .find(kind =>
+      String(mime).startsWith(
+        kind + '/'
+      )
+    );
 
 /* ---------- login ---------- */
 
@@ -382,16 +460,20 @@ app.post('/api/login', (req, res) => {
     req.body.username || ''
   ).toLowerCase();
 
-  const u = db.users[id];
+  const user = db.users[id];
 
   if (
-    !u ||
-    u.pass !==
-      hashPw(req.body.password || '')
+    !user ||
+    user.pass !==
+      hashPw(
+        req.body.password || ''
+      )
   ) {
     return res
       .status(401)
-      .json({ error: 'Wrong password' });
+      .json({
+        error: 'Wrong password'
+      });
   }
 
   const token = crypto
@@ -402,7 +484,9 @@ app.post('/api/login', (req, res) => {
 
   save();
 
-  res.json({ token });
+  res.json({
+    token
+  });
 });
 
 /* ---------- logout ---------- */
@@ -411,15 +495,20 @@ app.post(
   '/api/logout',
   auth,
   (req, res) => {
-    const t = (
+    const token = (
       req.headers.authorization || ''
-    ).replace('Bearer ', '');
+    ).replace(
+      'Bearer ',
+      ''
+    );
 
-    delete db.sessions[t];
+    delete db.sessions[token];
 
     save();
 
-    res.json({ ok: true });
+    res.json({
+      ok: true
+    });
   }
 );
 
@@ -432,13 +521,15 @@ app.get(
     res.json({
       ...view(req.uid),
 
-      messages: db.messages.filter(
-        m =>
-          m.from === req.uid ||
-          m.to === req.uid
-      ),
+      messages:
+        db.messages.filter(
+          message =>
+            message.from === req.uid ||
+            message.to === req.uid
+        ),
 
-      statuses: liveStatuses()
+      statuses:
+        liveStatuses()
     });
   }
 );
@@ -448,8 +539,11 @@ app.get(
 app.get(
   '/api/statuses',
   auth,
-  (req, res) =>
-    res.json(liveStatuses())
+  (req, res) => {
+    res.json(
+      liveStatuses()
+    );
+  }
 );
 
 /* ---------- upload ---------- */
@@ -494,42 +588,50 @@ app.post(
   '/api/profile',
   auth,
   (req, res) => {
-    const u = db.users[req.uid];
-    const b = req.body || {};
+    const user =
+      db.users[req.uid];
 
-    const okUrl = v =>
-      v === null ||
+    const body =
+      req.body || {};
+
+    const okUrl = value =>
+      value === null ||
       (
-        typeof v === 'string' &&
-        URL_RE.test(v)
+        typeof value === 'string' &&
+        URL_RE.test(value)
       );
 
     if (
-      'avatar' in b &&
-      okUrl(b.avatar)
+      'avatar' in body &&
+      okUrl(body.avatar)
     ) {
-      u.avatar = b.avatar;
+      user.avatar =
+        body.avatar;
 
       emitTo(
-        PEER[u.id],
+        PEER[user.id],
         'peer:update',
         {
-          avatar: u.avatar
+          avatar:
+            user.avatar
         }
       );
     }
 
     if (
-      'wallpaper' in b &&
-      okUrl(b.wallpaper)
+      'wallpaper' in body &&
+      okUrl(body.wallpaper)
     ) {
-      u.wallpaper = b.wallpaper;
+      user.wallpaper =
+        body.wallpaper;
     }
 
-    if ('contactName' in b) {
-      u.contactName =
+    if (
+      'contactName' in body
+    ) {
+      user.contactName =
         String(
-          b.contactName || ''
+          body.contactName || ''
         )
           .trim()
           .slice(0, 40) || null;
@@ -537,7 +639,9 @@ app.post(
 
     save();
 
-    res.json(view(u.id));
+    res.json(
+      view(user.id)
+    );
   }
 );
 
@@ -553,7 +657,7 @@ app.post(
       url
     } = req.body || {};
 
-    const s = {
+    const status = {
       id: ++db.seq,
       uid: req.uid,
       type,
@@ -566,23 +670,25 @@ app.post(
       type === 'text' &&
       String(text || '').trim()
     ) {
-      s.text = String(text)
-        .trim()
-        .slice(0, 300);
+      status.text =
+        String(text)
+          .trim()
+          .slice(0, 300);
     } else if (
       type === 'image' &&
       URL_RE.test(url || '')
     ) {
-      s.url = url;
+      status.url = url;
     } else {
       return res
         .status(400)
         .json({
-          error: 'Invalid status'
+          error:
+            'Invalid status'
         });
     }
 
-    db.statuses.push(s);
+    db.statuses.push(status);
 
     save();
 
@@ -595,7 +701,7 @@ app.post(
       }
     );
 
-    res.json(s);
+    res.json(status);
   }
 );
 
@@ -617,7 +723,10 @@ let call = null;
 
 const clearCall = () => {
   if (call) {
-    clearTimeout(call.timer);
+    clearTimeout(
+      call.timer
+    );
+
     call = null;
   }
 };
@@ -654,26 +763,36 @@ function terminate(
       : c.caller;
 
   if (!c.answered) {
-    if (uid === c.callee) {
-      logCall(c, 'rejected');
+    if (
+      uid === c.callee
+    ) {
+      logCall(
+        c,
+        'rejected'
+      );
 
       emitTo(
         c.caller,
         'call:end',
         {
           callId: c.id,
-          reason: calleeReason
+          reason:
+            calleeReason
         }
       );
     } else {
-      logCall(c, 'missed');
+      logCall(
+        c,
+        'missed'
+      );
 
       emitTo(
         c.callee,
         'call:end',
         {
           callId: c.id,
-          reason: 'missed'
+          reason:
+            'missed'
         }
       );
     }
@@ -682,7 +801,8 @@ function terminate(
       c,
       'ended',
       Math.round(
-        (Date.now() - c.t) / 1000
+        (Date.now() - c.t) /
+          1000
       )
     );
 
@@ -710,422 +830,538 @@ function terminate(
 
 /* ---------- socket authentication ---------- */
 
-io.use((s, next) => {
+io.use((socket, next) => {
   const id = authUser(
-    s.handshake.auth &&
-      s.handshake.auth.token
+    socket.handshake.auth &&
+      socket.handshake.auth.token
   );
 
   if (!id) {
     return next(
-      new Error('unauthorized')
+      new Error(
+        'unauthorized'
+      )
     );
   }
 
-  s.uid = id;
+  socket.uid = id;
 
   next();
 });
 
 /* ---------- socket connection ---------- */
 
-io.on('connection', s => {
-  const me = s.uid;
-  const peer = PEER[me];
+io.on(
+  'connection',
+  socket => {
+    const me =
+      socket.uid;
 
-  const first = !isOn(me);
+    const peer =
+      PEER[me];
 
-  socks[me].add(s);
+    const first =
+      !isOn(me);
 
-  s.emit('hello', {
-    id: me,
-    name: db.users[me].name
-  });
+    socks[me].add(
+      socket
+    );
 
-  if (first) {
-    emitTo(
-      peer,
-      'presence',
+    socket.emit(
+      'hello',
       {
-        online: true,
-        lastSeen:
-          db.users[me].lastSeen
+        id: me,
+        name:
+          db.users[me].name
       }
     );
-  }
 
-  const got = [];
-
-  db.messages.forEach(m => {
-    if (
-      m.to === me &&
-      !m.delivered
-    ) {
-      m.delivered = true;
-      got.push(m.id);
+    if (first) {
+      emitTo(
+        peer,
+        'presence',
+        {
+          online: true,
+          lastSeen:
+            db.users[me]
+              .lastSeen
+        }
+      );
     }
-  });
 
-  if (got.length) {
-    save();
+    const got = [];
 
-    emitTo(
-      peer,
-      'receipts',
-      {
-        ids: got,
-        state: 'delivered'
+    db.messages.forEach(
+      message => {
+        if (
+          message.to === me &&
+          !message.delivered
+        ) {
+          message.delivered =
+            true;
+
+          got.push(
+            message.id
+          );
+        }
       }
     );
-  }
 
-  /* ---------- send ---------- */
-
-  s.on('send', p => {
-    p = p || {};
-
-    const m = {
-      id: ++db.seq,
-      from: me,
-      to: peer,
-      kind: p.kind,
-      text: null,
-      url: null,
-      at: Date.now(),
-      delivered: isOn(peer),
-      seen: false
-    };
-
-    if (p.kind === 'text') {
-      m.text = String(
-        p.text || ''
-      )
-        .trim()
-        .slice(0, 4000);
-
-      if (!m.text) return;
-    } else if (
-      ['image', 'video', 'audio'].includes(
-        p.kind
-      ) &&
-      URL_RE.test(p.url || '')
-    ) {
-      m.url = p.url;
-    } else {
-      return;
-    }
-
-    addMessage(m);
-  });
-
-  /* ---------- read ---------- */
-
-  s.on('read', () => {
-    const ids = [];
-
-    db.messages.forEach(m => {
-      if (
-        m.to === me &&
-        !m.seen
-      ) {
-        m.seen = true;
-        m.delivered = true;
-        ids.push(m.id);
-      }
-    });
-
-    if (ids.length) {
+    if (got.length) {
       save();
 
       emitTo(
         peer,
         'receipts',
         {
-          ids,
-          state: 'seen'
+          ids: got,
+          state:
+            'delivered'
         }
       );
     }
-  });
 
-  /* ---------- typing ---------- */
+    /* ---------- send ---------- */
 
-  s.on('typing', on => {
-    emitTo(
-      peer,
-      'typing',
-      {
-        on: !!on
-      }
-    );
-  });
+    socket.on(
+      'send',
+      payload => {
+        payload =
+          payload || {};
 
-  /* ---------- call start ---------- */
+        const message = {
+          id: ++db.seq,
+          from: me,
+          to: peer,
+          kind:
+            payload.kind,
+          text: null,
+          url: null,
+          at: Date.now(),
+          delivered:
+            isOn(peer),
+          seen: false
+        };
 
-  s.on(
-    'call:start',
-    ({ kind } = {}) => {
-      kind =
-        kind === 'video'
-          ? 'video'
-          : 'voice';
-
-      if (
-        call &&
-        (
-          !isOn(call.caller) ||
-          !isOn(call.callee)
-        )
-      ) {
-        clearCall();
-      }
-
-      if (call) {
-        return s.emit(
-          'call:end',
-          {
-            reason: 'busy'
-          }
-        );
-      }
-
-      const c = {
-        id: crypto.randomUUID(),
-        kind,
-        caller: me,
-        callee: peer,
-        answered: false
-      };
-
-      if (!isOn(peer)) {
-        logCall(c, 'missed');
-
-        return s.emit(
-          'call:end',
-          {
-            reason: 'offline'
-          }
-        );
-      }
-
-      call = c;
-
-      c.timer = setTimeout(() => {
         if (
-          call !== c ||
-          c.answered
+          payload.kind ===
+          'text'
         ) {
+          message.text =
+            String(
+              payload.text ||
+                ''
+            )
+              .trim()
+              .slice(
+                0,
+                4000
+              );
+
+          if (
+            !message.text
+          ) {
+            return;
+          }
+        } else if (
+          [
+            'image',
+            'video',
+            'audio'
+          ].includes(
+            payload.kind
+          ) &&
+          URL_RE.test(
+            payload.url || ''
+          )
+        ) {
+          message.url =
+            payload.url;
+        } else {
           return;
         }
 
-        logCall(
-          c,
-          'missed'
+        addMessage(
+          message
         );
+      }
+    );
+
+    /* ---------- read ---------- */
+
+    socket.on(
+      'read',
+      () => {
+        const ids = [];
+
+        db.messages.forEach(
+          message => {
+            if (
+              message.to ===
+                me &&
+              !message.seen
+            ) {
+              message.seen =
+                true;
+
+              message.delivered =
+                true;
+
+              ids.push(
+                message.id
+              );
+            }
+          }
+        );
+
+        if (ids.length) {
+          save();
+
+          emitTo(
+            peer,
+            'receipts',
+            {
+              ids,
+              state: 'seen'
+            }
+          );
+        }
+      }
+    );
+
+    /* ---------- typing ---------- */
+
+    socket.on(
+      'typing',
+      on => {
+        emitTo(
+          peer,
+          'typing',
+          {
+            on: !!on
+          }
+        );
+      }
+    );
+
+    /* ---------- call start ---------- */
+
+    socket.on(
+      'call:start',
+      ({ kind } = {}) => {
+        kind =
+          kind === 'video'
+            ? 'video'
+            : 'voice';
+
+        if (
+          call &&
+          (
+            !isOn(
+              call.caller
+            ) ||
+            !isOn(
+              call.callee
+            )
+          )
+        ) {
+          clearCall();
+        }
+
+        if (call) {
+          return socket.emit(
+            'call:end',
+            {
+              reason: 'busy'
+            }
+          );
+        }
+
+        const c = {
+          id:
+            crypto.randomUUID(),
+          kind,
+          caller: me,
+          callee: peer,
+          answered: false
+        };
+
+        if (!isOn(peer)) {
+          logCall(
+            c,
+            'missed'
+          );
+
+          return socket.emit(
+            'call:end',
+            {
+              reason:
+                'offline'
+            }
+          );
+        }
+
+        call = c;
+
+        c.timer =
+          setTimeout(
+            () => {
+              if (
+                call !== c ||
+                c.answered
+              ) {
+                return;
+              }
+
+              logCall(
+                c,
+                'missed'
+              );
+
+              emitTo(
+                c.caller,
+                'call:end',
+                {
+                  callId:
+                    c.id,
+                  reason:
+                    'noanswer'
+                }
+              );
+
+              emitTo(
+                c.callee,
+                'call:end',
+                {
+                  callId:
+                    c.id,
+                  reason:
+                    'missed'
+                }
+              );
+
+              clearCall();
+            },
+            45000
+          );
 
         emitTo(
           c.caller,
-          'call:end',
-          {
-            callId: c.id,
-            reason: 'noanswer'
-          }
+          'call:ringing',
+          callInfo(
+            c,
+            c.caller
+          )
         );
 
         emitTo(
           c.callee,
-          'call:end',
-          {
-            callId: c.id,
-            reason: 'missed'
-          }
+          'call:incoming',
+          callInfo(
+            c,
+            c.callee
+          )
         );
-
-        clearCall();
-      }, 45000);
-
-      emitTo(
-        c.caller,
-        'call:ringing',
-        callInfo(c, c.caller)
-      );
-
-      emitTo(
-        c.callee,
-        'call:incoming',
-        callInfo(c, c.callee)
-      );
-    }
-  );
-
-  /* ---------- call accept ---------- */
-
-  s.on(
-    'call:accept',
-    ({ callId } = {}) => {
-      if (
-        !call ||
-        call.id !== callId ||
-        call.callee !== me ||
-        call.answered
-      ) {
-        return;
-      }
-
-      call.answered = true;
-      call.t = Date.now();
-
-      clearTimeout(call.timer);
-
-      emitTo(
-        call.caller,
-        'call:accepted',
-        {
-          callId
-        }
-      );
-    }
-  );
-
-  /* ---------- call reject ---------- */
-
-  s.on(
-    'call:reject',
-    ({ callId } = {}) => {
-      if (
-        call &&
-        (!callId ||
-          call.id === callId) &&
-        call.callee === me &&
-        !call.answered
-      ) {
-        terminate(me);
-      }
-    }
-  );
-
-  /* ---------- call busy ---------- */
-
-  s.on(
-    'call:busy',
-    ({ callId } = {}) => {
-      if (
-        call &&
-        call.id === callId &&
-        call.callee === me &&
-        !call.answered
-      ) {
-        terminate(
-          me,
-          'busy'
-        );
-      }
-    }
-  );
-
-  /* ---------- call cancel ---------- */
-
-  s.on(
-    'call:cancel',
-    ({ callId } = {}) => {
-      if (
-        call &&
-        (!callId ||
-          call.id === callId) &&
-        call.caller === me &&
-        !call.answered
-      ) {
-        terminate(me);
-      }
-    }
-  );
-
-  /* ---------- call hangup ---------- */
-
-  s.on(
-    'call:hangup',
-    ({ callId } = {}) => {
-      if (
-        call &&
-        call.id === callId &&
-        call.answered &&
-        (
-          call.caller === me ||
-          call.callee === me
-        )
-      ) {
-        terminate(me);
-      }
-    }
-  );
-
-  /* ---------- call signal ---------- */
-
-  s.on(
-    'call:signal',
-    ({ callId, data } = {}) => {
-      if (
-        call &&
-        call.id === callId &&
-        call.answered &&
-        (
-          call.caller === me ||
-          call.callee === me
-        )
-      ) {
-        emitTo(
-          peer,
-          'call:signal',
-          {
-            callId,
-            data
-          }
-        );
-      }
-    }
-  );
-
-  /* ---------- disconnect ---------- */
-
-  s.on('disconnect', () => {
-    socks[me].delete(s);
-
-    if (isOn(me)) return;
-
-    db.users[me].lastSeen =
-      Date.now();
-
-    save();
-
-    emitTo(
-      peer,
-      'presence',
-      {
-        online: false,
-        lastSeen:
-          db.users[me].lastSeen
       }
     );
 
-    if (
-      call &&
-      (
-        call.caller === me ||
-        call.callee === me
-      )
-    ) {
-      terminate(me);
-    }
-  });
-});
+    /* ---------- call accept ---------- */
+
+    socket.on(
+      'call:accept',
+      ({ callId } = {}) => {
+        if (
+          !call ||
+          call.id !== callId ||
+          call.callee !== me ||
+          call.answered
+        ) {
+          return;
+        }
+
+        call.answered =
+          true;
+
+        call.t =
+          Date.now();
+
+        clearTimeout(
+          call.timer
+        );
+
+        emitTo(
+          call.caller,
+          'call:accepted',
+          {
+            callId
+          }
+        );
+      }
+    );
+
+    /* ---------- call reject ---------- */
+
+    socket.on(
+      'call:reject',
+      ({ callId } = {}) => {
+        if (
+          call &&
+          (!callId ||
+            call.id ===
+              callId) &&
+          call.callee ===
+            me &&
+          !call.answered
+        ) {
+          terminate(me);
+        }
+      }
+    );
+
+    /* ---------- call busy ---------- */
+
+    socket.on(
+      'call:busy',
+      ({ callId } = {}) => {
+        if (
+          call &&
+          call.id ===
+            callId &&
+          call.callee ===
+            me &&
+          !call.answered
+        ) {
+          terminate(
+            me,
+            'busy'
+          );
+        }
+      }
+    );
+
+    /* ---------- call cancel ---------- */
+
+    socket.on(
+      'call:cancel',
+      ({ callId } = {}) => {
+        if (
+          call &&
+          (!callId ||
+            call.id ===
+              callId) &&
+          call.caller ===
+            me &&
+          !call.answered
+        ) {
+          terminate(me);
+        }
+      }
+    );
+
+    /* ---------- call hangup ---------- */
+
+    socket.on(
+      'call:hangup',
+      ({ callId } = {}) => {
+        if (
+          call &&
+          call.id ===
+            callId &&
+          call.answered &&
+          (
+            call.caller ===
+              me ||
+            call.callee ===
+              me
+          )
+        ) {
+          terminate(me);
+        }
+      }
+    );
+
+    /* ---------- call signal ---------- */
+
+    socket.on(
+      'call:signal',
+      ({ callId, data } = {}) => {
+        if (
+          call &&
+          call.id ===
+            callId &&
+          call.answered &&
+          (
+            call.caller ===
+              me ||
+            call.callee ===
+              me
+          )
+        ) {
+          emitTo(
+            peer,
+            'call:signal',
+            {
+              callId,
+              data
+            }
+          );
+        }
+      }
+    );
+
+    /* ---------- disconnect ---------- */
+
+    socket.on(
+      'disconnect',
+      () => {
+        socks[me].delete(
+          socket
+        );
+
+        if (isOn(me)) {
+          return;
+        }
+
+        db.users[me].lastSeen =
+          Date.now();
+
+        save();
+
+        emitTo(
+          peer,
+          'presence',
+          {
+            online: false,
+            lastSeen:
+              db.users[me]
+                .lastSeen
+          }
+        );
+
+        if (
+          call &&
+          (
+            call.caller ===
+              me ||
+            call.callee ===
+              me
+          )
+        ) {
+          terminate(me);
+        }
+      }
+    );
+  }
+);
 
 /* ---------- start ---------- */
 
 server.listen(
   PORT,
   '0.0.0.0',
-  () =>
+  () => {
     console.log(
       `Private Messenger running → http://localhost:${PORT}`
-    )
+    );
+  }
 );
