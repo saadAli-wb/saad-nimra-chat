@@ -118,6 +118,9 @@ app.use((req, res, next) => {
   if (!hasAccess(req)) return res.redirect('/access.html');
   next();
 });
+app.get('/access.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'access.html'));
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
