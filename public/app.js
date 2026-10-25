@@ -10,7 +10,8 @@ const IC = {
   clip: '<path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
   mic: '<rect x="9" y="1" width="6" height="12" rx="3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>',
   send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>',
-  x: '<path d="M18 6L6 18M6 6l12 12"/>'
+  x: '<path d="M18 6L6 18M6 6l12 12"/>',
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
 };
 $$('[data-ic]').forEach(e => e.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[e.dataset.ic]}</svg>`);
 
@@ -163,9 +164,10 @@ function onMessage(m) {
   S.msgs.push(m); appendMsg(m); if (stick) toBottom(true);
   if (m.from === S.peer.id && m.kind !== 'call') {
     markRead();
-    const away = document.hidden || !document.hasFocus() || $$('.overlay:not([hidden])').length || !$('#callScreen').hidden;
+    const away = document.hidden || !document.hasFocus() || $$('.overlay:not([hidden])').length || ($('#callScreen').hidden === false && $('#callChat').hidden);
     if (away) notify(S.peer.name, { text: m.text, image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice message' }[m.kind]);
   }
+  ccOnMsg(m);
 }
 function markRead() {
   if (document.hidden || !S.sock) return;
@@ -334,6 +336,7 @@ function paintCall() {
   $('#cTitle').textContent = C.phase === 'connected' ? '' : incoming ? `Incoming ${k} call from ${peer.name}` : C.dir === 'out' && ringing ? `Calling ${peer.name}…` : 'Connecting…';
   if (C.phase !== 'connected') $('#cSub').textContent = '';
   $('#cAccept').hidden = !incoming; $('#cMute').hidden = incoming;
+  $('#cChat').hidden = incoming;
   $('#cCam').hidden = incoming || !(C.local && C.local.getVideoTracks().length);
   $('#cEnd small').textContent = incoming ? 'Reject' : ringing ? 'Cancel' : 'End';
   if (C.local) $('#localV').srcObject = C.local;
@@ -427,6 +430,7 @@ function finishCall() {
     if (C.pc) { C.pc.onconnectionstatechange = null; C.pc.close(); }
   }
   C = null; $('#remoteV').srcObject = null; $('#localV').srcObject = null;
+  $('#callChat').hidden = true; ccUnread = 0; $('#cBadge').hidden = true;
   if (S.me) document.title = S.me.name + ' · Messenger';
   ['cMute', 'cCam'].forEach(id => { $('#' + id).classList.remove('off'); });
   $('#cMute small').textContent = 'Mute'; $('#cCam small').textContent = 'Camera off';
@@ -440,5 +444,31 @@ $('#cCam').onclick = e => {
   const t = C && C.local && C.local.getVideoTracks()[0]; if (!t) return;
   t.enabled = !t.enabled; e.currentTarget.classList.toggle('off', !t.enabled); $('#cCam small').textContent = t.enabled ? 'Camera off' : 'Camera on';
 };
+
+/* ---------- chat during call ---------- */
+let ccUnread = 0;
+const ccLabel = m => m.kind === 'text' ? m.text : ({ image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice message' }[m.kind] || '');
+function ccPaint() {
+  const box = $('#ccMsgs'); box.innerHTML = '';
+  S.msgs.filter(m => m.kind !== 'call').slice(-30).forEach(m => box.append(mk('div', 'cc-b ' + (m.from === S.me.id ? 'out' : 'in'), ccLabel(m))));
+  box.scrollTop = box.scrollHeight;
+}
+function ccOnMsg(m) {
+  if (!C || m.kind === 'call') return;
+  if (!$('#callChat').hidden) ccPaint();
+  else if (m.from === S.peer.id) { ccUnread++; $('#cBadge').textContent = ccUnread; $('#cBadge').hidden = false; }
+}
+function ccSend() {
+  const i = $('#ccInput'), text = i.value.trim();
+  if (!text || !S.sock) return;
+  S.sock.emit('send', { kind: 'text', text }); i.value = '';
+}
+$('#cChat').onclick = () => {
+  const p = $('#callChat'); p.hidden = !p.hidden;
+  if (!p.hidden) { ccUnread = 0; $('#cBadge').hidden = true; ccPaint(); $('#ccInput').focus(); }
+};
+$('#ccClose').onclick = () => { $('#callChat').hidden = true; };
+$('#ccSend').onclick = ccSend;
+$('#ccInput').onkeydown = e => { if (e.key === 'Enter') ccSend(); };
 
 boot();
