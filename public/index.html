@@ -94,7 +94,19 @@
     <small id="cSub"></small>
     <small id="cSelf" class="muted"></small>
   </div>
+
+  <!-- chat during call -->
+  <div id="callChat" hidden>
+    <div class="cc-head"><b>Chat</b><button class="ibtn" id="ccClose" type="button"><i data-ic="x"></i></button></div>
+    <div id="ccMsgs"></div>
+    <div class="cc-foot">
+      <input id="ccInput" placeholder="Type a message" autocomplete="off">
+      <button class="ibtn fab" id="ccSend" type="button"><i data-ic="send"></i></button>
+    </div>
+  </div>
+
   <div class="cctl">
+    <button class="cbtn" id="cChat" type="button"><i data-ic="chat"></i><small>Chat</small><em id="cBadge" hidden>0</em></button>
     <button class="cbtn" id="cMute"><i data-ic="mic"></i><small>Mute</small></button>
     <button class="cbtn" id="cCam"><i data-ic="video"></i><small>Camera off</small></button>
     <button class="cbtn red hang" id="cEnd"><i data-ic="phone"></i><small>End</small></button>
