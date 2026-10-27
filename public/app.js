@@ -11,11 +11,35 @@ const IC = {
   mic: '<rect x="9" y="1" width="6" height="12" rx="3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>',
   send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
-  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  chev: '<path d="M6 9l6 6 6-6"/>'
 };
-$$('[data-ic]').forEach(e => e.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[e.dataset.ic]}</svg>`);
+const svg = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n]}</svg>`;
+$$('[data-ic]').forEach(e => e.innerHTML = svg(e.dataset.ic));
 
-const S = { token: sessionStorage.getItem('pm_token'), me: null, peer: null, msgs: [], sock: null, peerTyping: false, notif: localStorage.getItem('pm_notif') !== 'off' };
+/* ---------- themes ---------- */
+const THEMES = [
+  { id: 'twilight', name: 'Twilight', c: ['#ff8fc7', '#8a6bff'], meta: '#150b3d' },
+  { id: 'ocean', name: 'Ocean', c: ['#36c6e0', '#4f8bff'], meta: '#04202f' },
+  { id: 'sunset', name: 'Sunset', c: ['#ff9a5c', '#ff5f8a'], meta: '#2b0f1a' },
+  { id: 'forest', name: 'Forest', c: ['#42cf8a', '#23b3a0'], meta: '#07160f' },
+  { id: 'midnight', name: 'Midnight', c: ['#6b8cff', '#9a6bff'], meta: '#05060a' }
+];
+function applyTheme(id) {
+  const t = THEMES.find(x => x.id === id) || THEMES[0];
+  document.documentElement.dataset.theme = t.id;
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = t.meta;
+  $$('.sw').forEach(b => b.classList.toggle('on', b.dataset.theme === t.id));
+}
+THEMES.forEach(t => {
+  const b = mk('button', 'sw'); b.type = 'button'; b.dataset.theme = t.id; b.title = t.name;
+  b.style.background = `linear-gradient(135deg,${t.c[0]},${t.c[1]})`;
+  b.onclick = () => { try { localStorage.setItem('pm_theme', t.id); } catch { } applyTheme(t.id); };
+  $('#themeRow').append(b);
+});
+applyTheme((() => { try { return localStorage.getItem('pm_theme'); } catch { return null; } })());
+
+const S = { token: sessionStorage.getItem('pm_token'), me: null, peer: null, msgs: [], sock: null, peerTyping: false, notif: localStorage.getItem('pm_notif') !== 'off', replyTo: null, editing: null };
 const COLORS = { saad: '#7c5cff', nimra: '#ff5c9d' };
 const initialAv = (name, id) => {
   const ch = ((name || '?').trim()[0] || '?').replace(/[<>&'"]/g, '?').toUpperCase();
@@ -94,6 +118,7 @@ function connect() {
   });
   s.on('connect', () => { if (first) { first = false; markRead(); } else loadAll(); });
   s.on('message', onMessage);
+  s.on('msg:update', onMsgUpdate);
   s.on('receipts', ({ ids, state }) => ids.forEach(id => {
     const m = S.msgs.find(x => x.id === id); if (!m) return;
     m[state] = true; if (state === 'seen') m.delivered = true; paintTick(m);
@@ -130,25 +155,55 @@ function callText(m) {
 }
 const nearBottom = () => { const b = $('#stream'); return b.scrollHeight - b.scrollTop - b.clientHeight < 160; };
 const toBottom = smooth => { const b = $('#stream'); b.scrollTo({ top: b.scrollHeight, behavior: smooth ? 'smooth' : 'auto' }); };
+
+/* short text for quotes, bars and notifications */
+const snip = m => !m || m.deleted ? 'Message deleted'
+  : m.kind === 'text' ? m.text
+  : ({ image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice message' }[m.kind] || '');
+const whoName = m => m.from === S.me.id ? 'You' : S.peer.name;
+
+/* build (or rebuild) the inside of one message bubble */
+function fillBubble(m, el) {
+  el.innerHTML = '';
+  const mine = m.from === S.me.id;
+  if (m.replyTo && !m.deleted) {
+    const q = S.msgs.find(x => x.id === m.replyTo);
+    const qe = mk('div', 'quote');
+    qe.append(mk('b', '', q ? whoName(q) : 'Message'), mk('span', '', snip(q)));
+    qe.onclick = () => jumpTo(m.replyTo);
+    el.append(qe);
+  }
+  if (m.deleted) el.append(mk('div', 'txt del', '🚫 This message was deleted'));
+  else if (m.kind === 'text') el.append(mk('div', 'txt', m.text));
+  else if (m.kind === 'image') { const i = mk('img'); i.src = m.url; i.alt = ''; i.onclick = () => { $('#lbImg').src = m.url; $('#lightbox').hidden = false; }; i.onload = () => toBottom(false); el.append(i); }
+  else if (m.kind === 'video') { const v = mk('video'); v.src = m.url; v.controls = true; v.playsInline = true; v.preload = 'metadata'; el.append(v); }
+  else { const a = mk('audio'); a.src = m.url; a.controls = true; a.preload = 'metadata'; el.append(a); }
+  const meta = mk('div', 'meta');
+  if (!m.deleted) {
+    const b = mk('button', 'mbtn'); b.type = 'button'; b.title = 'Options'; b.innerHTML = svg('chev');
+    b.onclick = e => { e.stopPropagation(); openMenu(m.id); };
+    meta.append(b);
+    if (m.edited) meta.append(mk('span', 'edited', 'edited'));
+  }
+  meta.append(mk('span', '', fmtTime(m.at)));
+  if (mine) meta.append(mk('span', 'tick'));
+  el.append(meta);
+}
 function appendMsg(m) {
   if (els.has(m.id)) return;
   const box = $('#stream'), day = new Date(m.at).toDateString();
   if (day !== lastDay) { lastDay = day; box.append(mk('div', 'chip', dayLabel(m.at))); }
   let el;
   if (m.kind === 'call') el = mk('div', 'chip', `${callText(m)} · ${fmtTime(m.at)}`);
-  else {
-    const mine = m.from === S.me.id;
-    el = mk('div', 'bub ' + (mine ? 'out' : 'in'));
-    if (m.kind === 'text') el.append(mk('div', 'txt', m.text));
-    else if (m.kind === 'image') { const i = mk('img'); i.src = m.url; i.alt = ''; i.onclick = () => { $('#lbImg').src = m.url; $('#lightbox').hidden = false; }; i.onload = () => toBottom(false); el.append(i); }
-    else if (m.kind === 'video') { const v = mk('video'); v.src = m.url; v.controls = true; v.playsInline = true; v.preload = 'metadata'; el.append(v); }
-    else { const a = mk('audio'); a.src = m.url; a.controls = true; a.preload = 'metadata'; el.append(a); }
-    const meta = mk('div', 'meta'); meta.append(mk('span', '', fmtTime(m.at)));
-    if (mine) meta.append(mk('span', 'tick'));
-    el.append(meta);
-  }
+  else { el = mk('div', 'bub ' + (m.from === S.me.id ? 'out' : 'in')); fillBubble(m, el); }
   box.append(el); els.set(m.id, el);
   if (m.from === S.me.id && m.kind !== 'call') paintTick(m);
+}
+function repaintMsg(m) {
+  const el = els.get(m.id);
+  if (!el || m.kind === 'call') return;
+  fillBubble(m, el);
+  if (m.from === S.me.id) paintTick(m);
 }
 function paintTick(m) {
   const el = els.get(m.id), t = el && $('.tick', el); if (!t) return;
@@ -158,6 +213,11 @@ function paintStream() {
   $('#stream').innerHTML = ''; els.clear(); lastDay = '';
   S.msgs.forEach(appendMsg); toBottom(false);
 }
+function jumpTo(id) {
+  const el = els.get(id); if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1300);
+}
 function onMessage(m) {
   if (S.msgs.some(x => x.id === m.id)) return;
   const stick = nearBottom() || m.from === S.me.id;
@@ -165,9 +225,22 @@ function onMessage(m) {
   if (m.from === S.peer.id && m.kind !== 'call') {
     markRead();
     const away = document.hidden || !document.hasFocus() || $$('.overlay:not([hidden])').length || ($('#callScreen').hidden === false && $('#callChat').hidden);
-    if (away) notify(S.peer.name, { text: m.text, image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice message' }[m.kind]);
+    if (away) notify(S.peer.name, snip(m));
   }
   ccOnMsg(m);
+}
+/* a message was edited or deleted */
+function onMsgUpdate(p) {
+  const m = S.msgs.find(x => x.id === p.id); if (!m) return;
+  Object.assign(m, p);
+  repaintMsg(m);
+  S.msgs.filter(x => x.replyTo === m.id).forEach(repaintMsg);
+  if (m.deleted) {
+    if (S.editing && S.editing.id === m.id) { input.value = ''; syncComposer(); clearBar(); }
+    if (S.replyTo && S.replyTo.id === m.id) clearBar();
+    if (menuMsg && menuMsg.id === m.id) $('#msgMenu').hidden = true;
+  }
+  if (!$('#callChat').hidden) ccPaint();
 }
 function markRead() {
   if (document.hidden || !S.sock) return;
@@ -175,20 +248,59 @@ function markRead() {
 }
 document.addEventListener('visibilitychange', markRead); window.addEventListener('focus', markRead);
 
+/* ---------- message menu (reply / copy / edit / delete) ---------- */
+let menuMsg = null;
+function openMenu(id) {
+  const m = S.msgs.find(x => x.id === id); if (!m || m.deleted) return;
+  menuMsg = m;
+  const mine = m.from === S.me.id;
+  $('#mmCopy').hidden = m.kind !== 'text';
+  $('#mmEdit').hidden = !(mine && m.kind === 'text');
+  $('#mmDelete').hidden = !mine;
+  $('#msgMenu').hidden = false;
+}
+$('#msgMenu').onclick = e => { if (e.target === e.currentTarget) e.currentTarget.hidden = true; };
+$('#mmReply').onclick = () => { $('#msgMenu').hidden = true; if (menuMsg) startReply(menuMsg); };
+$('#mmCopy').onclick = async () => {
+  $('#msgMenu').hidden = true; if (!menuMsg) return;
+  try { await navigator.clipboard.writeText(menuMsg.text); toast('Copied'); } catch { toast('Could not copy'); }
+};
+$('#mmEdit').onclick = () => { $('#msgMenu').hidden = true; if (menuMsg) startEdit(menuMsg); };
+$('#mmDelete').onclick = () => {
+  $('#msgMenu').hidden = true;
+  if (menuMsg && confirm('Delete this message for everyone?')) S.sock.emit('delete', { id: menuMsg.id });
+};
+
+/* reply / edit bar above the composer */
+function showBar(title, text) {
+  $('#rqName').textContent = title; $('#rqText').textContent = text; $('#replyBar').hidden = false;
+}
+function clearBar() { S.replyTo = null; S.editing = null; $('#replyBar').hidden = true; }
+function startReply(m) { S.editing = null; S.replyTo = m; showBar('Replying to ' + whoName(m), snip(m)); input.focus(); }
+function startEdit(m) {
+  S.replyTo = null; S.editing = m; input.value = m.text; syncComposer();
+  showBar('Editing message', m.text); input.focus();
+}
+$('#rqCancel').onclick = () => { if (S.editing) { input.value = ''; syncComposer(); } clearBar(); };
+
 /* ---------- composer ---------- */
 const input = $('#msgInput'); let typingSent = false, typingIdle;
 function syncComposer() { const has = input.value.trim().length > 0; $('#bSend').hidden = !has; $('#bMic').hidden = has; }
 function setTypingOut(on) { if (typingSent !== on) { typingSent = on; S.sock.emit('typing', on); } }
 function sendText() {
   const text = input.value.trim(); if (!text) return;
-  S.sock.emit('send', { kind: 'text', text }); input.value = ''; syncComposer(); setTypingOut(false); $('#emoji').hidden = true;
+  if (S.editing) { if (text !== S.editing.text) S.sock.emit('edit', { id: S.editing.id, text }); }
+  else S.sock.emit('send', { kind: 'text', text, replyTo: S.replyTo ? S.replyTo.id : undefined });
+  clearBar(); input.value = ''; syncComposer(); setTypingOut(false); $('#emoji').hidden = true;
 }
 input.oninput = () => { syncComposer(); setTypingOut(true); clearTimeout(typingIdle); typingIdle = setTimeout(() => setTypingOut(false), 2000); };
 input.onkeydown = e => { if (e.key === 'Enter') sendText(); };
 $('#bSend').onclick = sendText;
 
 async function sendFile(file) {
-  try { const r = await uploadFile(file); S.sock.emit('send', { kind: r.kind, url: r.url }); }
+  const rid = S.replyTo ? S.replyTo.id : undefined;
+  if (rid) clearBar();
+  try { const r = await uploadFile(file); S.sock.emit('send', { kind: r.kind, url: r.url, replyTo: rid }); }
   catch (e) { toast('Upload failed', e.message); }
 }
 $('#bAttach').onclick = () => $('#fileMedia').click();
@@ -447,7 +559,7 @@ $('#cCam').onclick = e => {
 
 /* ---------- chat during call ---------- */
 let ccUnread = 0;
-const ccLabel = m => m.kind === 'text' ? m.text : ({ image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice message' }[m.kind] || '');
+const ccLabel = m => m.deleted ? '🚫 Message deleted' : snip(m);
 function ccPaint() {
   const box = $('#ccMsgs'); box.innerHTML = '';
   S.msgs.filter(m => m.kind !== 'call').slice(-30).forEach(m => box.append(mk('div', 'cc-b ' + (m.from === S.me.id ? 'out' : 'in'), ccLabel(m))));
